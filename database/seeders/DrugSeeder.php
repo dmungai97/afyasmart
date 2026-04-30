@@ -109,7 +109,12 @@ class DrugSeeder extends Seeder
         ];
 
         foreach ($drugs as $drug) {
-            Drug::create($drug);
+            Drug::updateOrCreate(
+                ['name' => $drug['name']], // match by name
+                $drug
+            );
         }
+
+        $this->command->info('✅ Seeded ' . count($drugs) . ' drugs.');
     }
 }

@@ -57,7 +57,12 @@ class PharmacySeeder extends Seeder
         ];
 
         foreach ($pharmacies as $pharmacy) {
-            Pharmacy::create($pharmacy);
+            Pharmacy::updateOrCreate(
+                ['phone' => $pharmacy['phone']], // match by phone
+                $pharmacy
+            );
         }
-    }
+
+        $this->command->info('✅ Seeded ' . count($pharmacies) . ' pharmacies.');
+            }
 }

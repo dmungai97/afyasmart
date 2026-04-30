@@ -10,16 +10,23 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // Safe for production — no faker, no factory
+        // Admin user
         User::firstOrCreate(
-            ['email' => 'test@example.com'],
+            ['email' => 'admin@afyasmart.com'],
             [
-                'name'              => 'Test User',
+                'name'              => 'Admin',
                 'phone'             => '+254700000000',
                 'email_verified_at' => now(),
-                'password'          => Hash::make('password'),
+                'password'          => Hash::make('password123'),
                 'remember_token'    => \Illuminate\Support\Str::random(10),
             ]
         );
+
+        // Seed all data
+        $this->call([
+            DoctorSeeder::class,
+            DrugSeeder::class,
+            PharmacySeeder::class,
+        ]);
     }
 }
