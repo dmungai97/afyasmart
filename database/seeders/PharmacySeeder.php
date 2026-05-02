@@ -58,7 +58,7 @@ class PharmacySeeder extends Seeder
 
         foreach ($pharmacies as $pharmacy) {
             Pharmacy::updateOrCreate(
-                ['phone' => $pharmacy['phone']], // match by phone
+                ['phone' => $pharmacy['phone']],
                 $pharmacy
             );
         }
