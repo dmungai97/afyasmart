@@ -14,6 +14,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(HandleCors::class);
+
+        // Exclude M-Pesa callback from CSRF — Safaricom calls this without a token
+        $middleware->validateCsrfTokens(except: [
+            'api/v1/mpesa/callback',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

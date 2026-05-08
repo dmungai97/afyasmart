@@ -32,7 +32,7 @@ class AuthController extends Controller
             'status'  => 'success',
             'message' => 'Account created successfully',
             'token'   => $token,
-            'user'    => $user,
+            'user'    => $this->userPayload($user),
         ], 201);
     }
 
@@ -57,7 +57,7 @@ class AuthController extends Controller
             'status'  => 'success',
             'message' => 'Login successful',
             'token'   => $token,
-            'user'    => $user,
+            'user'    => $this->userPayload($user),
         ]);
     }
 
@@ -75,7 +75,21 @@ class AuthController extends Controller
     {
         return response()->json([
             'status' => 'success',
-            'user'   => $request->user(),
+            'user'   => $this->userPayload($request->user()),
         ]);
+    }
+
+    // ── Consistent user shape across all endpoints ───────────────
+    private function userPayload(User $user): array
+    {
+        return [
+            'id'                      => $user->id,
+            'name'                    => $user->name,
+            'email'                   => $user->email,
+            'phone'                   => $user->phone,
+            'is_subscribed'           => $user->is_subscribed,
+            'chat_count'              => $user->chat_count,
+            'subscription_expires_at' => $user->subscription_expires_at,
+        ];
     }
 }

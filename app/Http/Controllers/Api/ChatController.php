@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Http;
 
 class ChatController extends Controller
 {
+    const FREE_CHAT_LIMIT = 5;
+
     public function send(Request $request)
     {
         $request->validate([
@@ -17,7 +19,18 @@ class ChatController extends Controller
 
         $user = $request->user();
 
-        // --- Temporary mock when API key is not set ---
+        // ── Limit check ───────────────────────────────────────────
+        if (!$user->is_subscribed && $user->chat_count >= self::FREE_CHAT_LIMIT) {
+            return response()->json([
+                'status'        => 'error',
+                'limit_reached' => true,
+                'message'       => 'Free chat limit reached. Subscribe to continue.',
+                'chat_count'    => $user->chat_count,
+                'limit'         => self::FREE_CHAT_LIMIT,
+            ], 403);
+        }
+
+        // ── Mock mode ─────────────────────────────────────────────
         if (config('app.use_ai_mock') || empty(config('services.anthropic.key'))) {
             $aiReply = $this->mockReply(strtolower($request->message));
 
@@ -27,18 +40,28 @@ class ChatController extends Controller
                 'reply'   => $aiReply,
             ]);
 
-            return response()->json(['status' => 'success', 'reply' => $aiReply]);
-        }
-        // -----------------------------------------------
+            $user->increment('chat_count');
 
+            return response()->json([
+                'status'        => 'success',
+                'reply'         => $aiReply,
+                'chat_count'    => $user->chat_count,
+                'limit'         => self::FREE_CHAT_LIMIT,
+                'is_subscribed' => $user->is_subscribed,
+            ]);
+        }
+
+        // ── Anthropic Claude ──────────────────────────────────────
         $response = Http::withHeaders([
             'x-api-key'         => config('services.anthropic.key'),
             'anthropic-version' => '2023-06-01',
             'content-type'      => 'application/json',
         ])->post('https://api.anthropic.com/v1/messages', [
-            'model'      => 'claude-haiku-4-5',   // ← fixed
+            'model'      => 'claude-haiku-4-5',
             'max_tokens' => 1024,
-            'system'     => 'You are AfyaSmart AI, a helpful health assistant for users in Kenya. Provide clear, accurate general health information. Always remind users to consult a licensed doctor for diagnosis or treatment.',
+            'system'     => 'You are AfyaSmart AI, a helpful health assistant for users in Kenya.
+                             Provide clear, accurate general health information.
+                             Always remind users to consult a licensed doctor for diagnosis or treatment.',
             'messages'   => [
                 ['role' => 'user', 'content' => $request->message],
             ],
@@ -58,13 +81,61 @@ class ChatController extends Controller
         $aiReply = $response->json('content.0.text')
             ?? 'Sorry, I could not process your request.';
 
+        // ── Save log + increment count ────────────────────────────
         ChatLog::create([
             'user_id' => $user->id,
             'message' => $request->message,
             'reply'   => $aiReply,
         ]);
 
-        return response()->json(['status' => 'success', 'reply' => $aiReply]);
+        $user->increment('chat_count');
+
+        return response()->json([
+            'status'        => 'success',
+            'reply'         => $aiReply,
+            'chat_count'    => $user->chat_count,
+            'limit'         => self::FREE_CHAT_LIMIT,
+            'is_subscribed' => $user->is_subscribed,
+        ]);
+    }
+
+    public function status(Request $request)
+    {
+        $user = $request->user();
+
+        return response()->json([
+            'status'        => 'success',
+            'chat_count'    => $user->chat_count,
+            'limit'         => self::FREE_CHAT_LIMIT,
+            'is_subscribed' => $user->is_subscribed,
+            'limit_reached' => !$user->is_subscribed && $user->chat_count >= self::FREE_CHAT_LIMIT,
+            'remaining'     => max(0, self::FREE_CHAT_LIMIT - $user->chat_count),
+        ]);
+    }
+
+    public function resetOnSubscribe(Request $request)
+    {
+        $request->validate([
+            'plan' => 'required|in:daily,weekly,monthly',
+        ]);
+
+        $expiresAt = match($request->plan) {
+            'daily'   => now()->addDay(),
+            'weekly'  => now()->addWeek(),
+            'monthly' => now()->addMonth(),
+        };
+
+        $request->user()->update([
+            'is_subscribed'          => true,
+            'chat_count'             => 0,
+            'subscription_expires_at'=> $expiresAt,
+        ]);
+
+        return response()->json([
+            'status'                 => 'success',
+            'message'                => 'Subscription activated.',
+            'subscription_expires_at'=> $expiresAt,
+        ]);
     }
 
     private function mockReply(string $message): string
