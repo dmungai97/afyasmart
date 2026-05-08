@@ -17,8 +17,8 @@ class MpesaController extends Controller
     public function initiate(Request $request)
     {
         $request->validate([
-            'phone'  => 'required|string',
-            'plan'   => 'required|in:daily,weekly,monthly',
+            'phone' => 'required|string',
+            'plan'  => 'required|in:daily,weekly,monthly',
         ]);
 
         $user   = $request->user();
@@ -45,7 +45,6 @@ class MpesaController extends Controller
 
             $checkoutId = $result['CheckoutRequestID'];
 
-            // Cache: link checkoutId → user + plan (expires in 5 min)
             Cache::put("mpesa_{$checkoutId}", [
                 'user_id' => $user->id,
                 'plan'    => $request->plan,
@@ -74,10 +73,10 @@ class MpesaController extends Controller
         ]);
 
         $checkoutId = $request->checkout_request_id;
-        $user       = $request->user();
 
-        // Already confirmed via callback?
+        // ── Already confirmed via callback ───────────────────────
         if (Cache::get("mpesa_paid_{$checkoutId}")) {
+            Cache::forget("mpesa_paid_{$checkoutId}");
             return response()->json([
                 'status'  => 'success',
                 'paid'    => true,
@@ -85,40 +84,50 @@ class MpesaController extends Controller
             ]);
         }
 
-        // Query Daraja directly
-        $result = $this->mpesa->stkQuery($checkoutId);
+        // ── Query Daraja directly ────────────────────────────────
+        try {
+            $result     = $this->mpesa->stkQuery($checkoutId);
+            $resultCode = $result['ResultCode'] ?? null;
 
-        $resultCode = $result['ResultCode'] ?? null;
+            if ($resultCode === '0' || $resultCode === 0) {
+                $cached = Cache::get("mpesa_{$checkoutId}");
+                if ($cached) {
+                    $this->activateSubscription($cached['user_id'], $cached['plan']);
+                    Cache::forget("mpesa_{$checkoutId}");
+                }
 
-        if ($resultCode === '0' || $resultCode === 0) {
-            // Payment successful — activate subscription
-            $cached = Cache::get("mpesa_{$checkoutId}");
-            if ($cached) {
-                $this->activateSubscription($cached['user_id'], $cached['plan']);
-                Cache::forget("mpesa_{$checkoutId}");
+                return response()->json([
+                    'status'  => 'success',
+                    'paid'    => true,
+                    'message' => 'Payment confirmed.',
+                ]);
             }
 
-            return response()->json([
-                'status'  => 'success',
-                'paid'    => true,
-                'message' => 'Payment confirmed.',
-            ]);
-        }
+            if ($resultCode === '1032') {
+                Cache::forget("mpesa_{$checkoutId}");
+                return response()->json([
+                    'status'  => 'cancelled',
+                    'paid'    => false,
+                    'message' => 'Payment cancelled by user.',
+                ]);
+            }
 
-        if ($resultCode === '1032') {
+            // Still pending
             return response()->json([
-                'status'  => 'cancelled',
+                'status'  => 'pending',
                 'paid'    => false,
-                'message' => 'Payment cancelled by user.',
+                'message' => 'Waiting for payment confirmation.',
+            ]);
+
+        } catch (\Exception $e) {
+            // Daraja query failed — return pending instead of 500
+            Log::warning('STK Query failed', ['error' => $e->getMessage()]);
+            return response()->json([
+                'status'  => 'pending',
+                'paid'    => false,
+                'message' => 'Awaiting confirmation.',
             ]);
         }
-
-        // Still pending
-        return response()->json([
-            'status'  => 'pending',
-            'paid'    => false,
-            'message' => 'Waiting for payment confirmation.',
-        ]);
     }
 
     // ── 3. Daraja callback (called by Safaricom) ─────────────────
@@ -154,9 +163,9 @@ class MpesaController extends Controller
         };
 
         User::where('id', $userId)->update([
-            'is_subscribed'          => true,
-            'chat_count'             => 0,
-            'subscription_expires_at'=> $expiresAt,
+            'is_subscribed'           => true,
+            'chat_count'              => 0,
+            'subscription_expires_at' => $expiresAt,
         ]);
     }
 }
