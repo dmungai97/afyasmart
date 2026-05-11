@@ -113,31 +113,6 @@ class ChatController extends Controller
         ]);
     }
 
-    public function resetOnSubscribe(Request $request)
-    {
-        $request->validate([
-            'plan' => 'required|in:daily,weekly,monthly',
-        ]);
-
-        $expiresAt = match($request->plan) {
-            'daily'   => now()->addDay(),
-            'weekly'  => now()->addWeek(),
-            'monthly' => now()->addMonth(),
-        };
-
-        $request->user()->update([
-            'is_subscribed'          => true,
-            'chat_count'             => 0,
-            'subscription_expires_at'=> $expiresAt,
-        ]);
-
-        return response()->json([
-            'status'                 => 'success',
-            'message'                => 'Subscription activated.',
-            'subscription_expires_at'=> $expiresAt,
-        ]);
-    }
-
     private function mockReply(string $message): string
     {
         if (str_contains($message, 'headache')) {

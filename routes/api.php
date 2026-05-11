@@ -29,7 +29,6 @@ Route::prefix('v1')->group(function () {
         Route::post('/chat/send',      [ChatController::class, 'send']);
         Route::get('/chat/history',    [ChatController::class, 'history']);
         Route::get('/chat/status',     [ChatController::class, 'status']);
-        Route::post('/chat/subscribe', [ChatController::class, 'resetOnSubscribe']);
 
         // M-Pesa
         Route::post('/mpesa/initiate', [MpesaController::class, 'initiate']);
