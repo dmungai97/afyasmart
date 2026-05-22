@@ -16,6 +16,8 @@ Route::prefix('v1')->group(function () {
     Route::post('/auth/login',    [AuthController::class, 'login']);
 
     // ── M-Pesa callback — PUBLIC (Safaricom calls this, no token) ──
+    Route::post('/mpesa/initiate', [MpesaController::class, 'initiate']);
+    Route::post('/mpesa/status',   [MpesaController::class, 'status']);
     Route::post('/mpesa/callback', [MpesaController::class, 'callback']);
 
     // ── Protected ────────────────────────────────────────────
@@ -29,10 +31,6 @@ Route::prefix('v1')->group(function () {
         Route::post('/chat/send',      [ChatController::class, 'send']);
         Route::get('/chat/history',    [ChatController::class, 'history']);
         Route::get('/chat/status',     [ChatController::class, 'status']);
-
-        // M-Pesa
-        Route::post('/mpesa/initiate', [MpesaController::class, 'initiate']);
-        Route::post('/mpesa/status',   [MpesaController::class, 'status']);
 
         // Drugs
         Route::get('/drugs',        [DrugController::class, 'index']);

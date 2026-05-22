@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -17,11 +16,11 @@ class MpesaController extends Controller
     public function initiate(Request $request)
     {
         $request->validate([
-            'phone' => 'required|string',
-            'plan'  => 'required|in:daily,weekly,monthly',
+            'phone'        => 'required|string',
+            'plan'         => 'required|in:daily,weekly,monthly',
+            'firebase_uid' => 'nullable|string',
         ]);
 
-        $user   = $request->user();
         $amount = match($request->plan) {
             'daily'   => 20,
             'weekly'  => 100,
@@ -46,8 +45,8 @@ class MpesaController extends Controller
             $checkoutId = $result['CheckoutRequestID'];
 
             Cache::put("mpesa_{$checkoutId}", [
-                'user_id' => $user->id,
-                'plan'    => $request->plan,
+                'firebase_uid' => $request->firebase_uid,
+                'plan'         => $request->plan,
             ], now()->addMinutes(5));
 
             return response()->json([
@@ -92,7 +91,6 @@ class MpesaController extends Controller
             if ($resultCode === '0' || $resultCode === 0) {
                 $cached = Cache::get("mpesa_{$checkoutId}");
                 if ($cached) {
-                    $this->activateSubscription($cached['user_id'], $cached['plan']);
                     Cache::forget("mpesa_{$checkoutId}");
                 }
 
@@ -143,7 +141,6 @@ class MpesaController extends Controller
             $cached = Cache::get("mpesa_{$checkoutId}");
 
             if ($cached) {
-                $this->activateSubscription($cached['user_id'], $cached['plan']);
                 Cache::put("mpesa_paid_{$checkoutId}", true, now()->addMinutes(5));
                 Cache::forget("mpesa_{$checkoutId}");
             }
@@ -152,20 +149,4 @@ class MpesaController extends Controller
         return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
     }
 
-    // ── Helper ───────────────────────────────────────────────────
-    private function activateSubscription(int $userId, string $plan): void
-    {
-        $expiresAt = match($plan) {
-            'daily'   => now()->addDay(),
-            'weekly'  => now()->addWeek(),
-            'monthly' => now()->addMonth(),
-            default   => now()->addDay(),
-        };
-
-        User::where('id', $userId)->update([
-            'is_subscribed'           => true,
-            'chat_count'              => 0,
-            'subscription_expires_at' => $expiresAt,
-        ]);
-    }
 }
