@@ -7,6 +7,7 @@ use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class MpesaController extends Controller
 {
@@ -67,32 +68,27 @@ class MpesaController extends Controller
     // ── 2. Poll status (frontend polls every 3s) ─────────────────
     public function status(Request $request)
     {
-        $request->validate([
-            'checkout_request_id' => 'required|string',
-        ]);
-
-        $checkoutId = $request->checkout_request_id;
-
-        // ── Already confirmed via callback ───────────────────────
-        if (Cache::get("mpesa_paid_{$checkoutId}")) {
-            Cache::forget("mpesa_paid_{$checkoutId}");
-            return response()->json([
-                'status'  => 'success',
-                'paid'    => true,
-                'message' => 'Payment confirmed.',
-            ]);
-        }
-
-        // ── Query Daraja directly ────────────────────────────────
         try {
-            $result     = $this->mpesa->stkQuery($checkoutId);
+            $request->validate([
+                'checkout_request_id' => 'required|string',
+            ]);
+
+            $checkoutId = $request->checkout_request_id;
+
+            if (Cache::get("mpesa_paid_{$checkoutId}")) {
+                Cache::forget("mpesa_paid_{$checkoutId}");
+                return response()->json([
+                    'status'  => 'success',
+                    'paid'    => true,
+                    'message' => 'Payment confirmed.',
+                ]);
+            }
+
+            $result = $this->mpesa->stkQuery($checkoutId);
             $resultCode = $result['ResultCode'] ?? null;
 
             if ($resultCode === '0' || $resultCode === 0) {
-                $cached = Cache::get("mpesa_{$checkoutId}");
-                if ($cached) {
-                    Cache::forget("mpesa_{$checkoutId}");
-                }
+                Cache::forget("mpesa_{$checkoutId}");
 
                 return response()->json([
                     'status'  => 'success',
@@ -101,7 +97,7 @@ class MpesaController extends Controller
                 ]);
             }
 
-            if ($resultCode === '1032') {
+            if ($resultCode === '1032' || $resultCode === 1032) {
                 Cache::forget("mpesa_{$checkoutId}");
                 return response()->json([
                     'status'  => 'cancelled',
@@ -110,16 +106,17 @@ class MpesaController extends Controller
                 ]);
             }
 
-            // Still pending
             return response()->json([
                 'status'  => 'pending',
                 'paid'    => false,
                 'message' => 'Waiting for payment confirmation.',
             ]);
+        } catch (Throwable $e) {
+            Log::warning('M-Pesa status check failed', [
+                'error' => $e->getMessage(),
+                'checkout_request_id' => $request->input('checkout_request_id'),
+            ]);
 
-        } catch (\Exception $e) {
-            // Daraja query failed — return pending instead of 500
-            Log::warning('STK Query failed', ['error' => $e->getMessage()]);
             return response()->json([
                 'status'  => 'pending',
                 'paid'    => false,
