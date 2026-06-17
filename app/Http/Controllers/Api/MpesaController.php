@@ -84,6 +84,25 @@ class MpesaController extends Controller
                 ]);
             }
 
+            if (Cache::get("mpesa_cancelled_{$checkoutId}")) {
+                Cache::forget("mpesa_cancelled_{$checkoutId}");
+                return response()->json([
+                    'status'  => 'cancelled',
+                    'paid'    => false,
+                    'message' => 'Payment cancelled by user.',
+                ]);
+            }
+
+            $failedMessage = Cache::get("mpesa_failed_{$checkoutId}");
+            if ($failedMessage) {
+                Cache::forget("mpesa_failed_{$checkoutId}");
+                return response()->json([
+                    'status'  => 'failed',
+                    'paid'    => false,
+                    'message' => $failedMessage,
+                ]);
+            }
+
             $result = $this->mpesa->stkQuery($checkoutId);
             $resultCode = $result['ResultCode'] ?? null;
 
@@ -103,6 +122,15 @@ class MpesaController extends Controller
                     'status'  => 'cancelled',
                     'paid'    => false,
                     'message' => 'Payment cancelled by user.',
+                ]);
+            }
+
+            if ($resultCode !== null) {
+                Cache::forget("mpesa_{$checkoutId}");
+                return response()->json([
+                    'status'  => 'failed',
+                    'paid'    => false,
+                    'message' => $result['ResultDesc'] ?? 'M-Pesa payment failed.',
                 ]);
             }
 
@@ -134,11 +162,17 @@ class MpesaController extends Controller
         $resultCode = $body['ResultCode'] ?? null;
         $checkoutId = $body['CheckoutRequestID'] ?? null;
 
-        if ($resultCode === 0 && $checkoutId) {
+        if ($checkoutId) {
             $cached = Cache::get("mpesa_{$checkoutId}");
 
             if ($cached) {
-                Cache::put("mpesa_paid_{$checkoutId}", true, now()->addMinutes(5));
+                if ($resultCode === 0 || $resultCode === '0') {
+                    Cache::put("mpesa_paid_{$checkoutId}", true, now()->addMinutes(5));
+                } elseif ($resultCode === 1032 || $resultCode === '1032') {
+                    Cache::put("mpesa_cancelled_{$checkoutId}", true, now()->addMinutes(5));
+                } else {
+                    Cache::put("mpesa_failed_{$checkoutId}", $body['ResultDesc'] ?? 'M-Pesa payment failed.', now()->addMinutes(5));
+                }
                 Cache::forget("mpesa_{$checkoutId}");
             }
         }
