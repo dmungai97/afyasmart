@@ -25,6 +25,9 @@ Route::prefix('v1')->group(function () {
     Route::post('/chat/status',  [ChatController::class, 'status']);
     Route::post('/chat/history', [ChatController::class, 'history']);
 
+    // ── Symptoms — PUBLIC (daily limit check, rate-limited at controller level) ──
+    Route::post('/symptoms/analyze', [\App\Http\Controllers\Api\SymptomController::class, 'analyze']);
+
     // ── Protected ────────────────────────────────────────────
     Route::middleware('auth:sanctum')->group(function () {
 
