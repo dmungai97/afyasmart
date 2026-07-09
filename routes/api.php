@@ -15,10 +15,15 @@ Route::prefix('v1')->group(function () {
     Route::post('/auth/register', [AuthController::class, 'register']);
     Route::post('/auth/login',    [AuthController::class, 'login']);
 
-    // ── M-Pesa callback — PUBLIC (Safaricom calls this, no token) ──
+    // ── M-Pesa — PUBLIC (Safaricom calls callback; initiate/status also public) ──
     Route::post('/mpesa/initiate', [MpesaController::class, 'initiate']);
     Route::post('/mpesa/status',   [MpesaController::class, 'status']);
     Route::post('/mpesa/callback', [MpesaController::class, 'callback']);
+
+    // ── Chat — PUBLIC (auth via firebase_uid in body, same pattern as M-Pesa) ──
+    Route::post('/chat/send',    [ChatController::class, 'send']);
+    Route::post('/chat/status',  [ChatController::class, 'status']);
+    Route::post('/chat/history', [ChatController::class, 'history']);
 
     // ── Protected ────────────────────────────────────────────
     Route::middleware('auth:sanctum')->group(function () {
@@ -26,11 +31,6 @@ Route::prefix('v1')->group(function () {
         // Auth
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::get('/auth/me',      [AuthController::class, 'me']);
-
-        // Chat
-        Route::post('/chat/send',      [ChatController::class, 'send']);
-        Route::get('/chat/history',    [ChatController::class, 'history']);
-        Route::get('/chat/status',     [ChatController::class, 'status']);
 
         // Drugs
         Route::get('/drugs',        [DrugController::class, 'index']);

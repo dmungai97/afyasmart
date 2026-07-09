@@ -18,6 +18,7 @@ class User extends Authenticatable
         'email',
         'phone',
         'password',
+        'firebase_uid',
         'chat_count',
         'is_subscribed',
         'subscription_expires_at',

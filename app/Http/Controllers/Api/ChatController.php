@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ChatLog;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -11,16 +12,29 @@ class ChatController extends Controller
 {
     const FREE_CHAT_LIMIT = 5;
 
+    /**
+     * Resolve the calling user from the firebase_uid field in the request body.
+     * Returns null if no matching user is found — callers decide how to handle that.
+     */
+    private function resolveUser(Request $request): ?User
+    {
+        $uid = $request->input('firebase_uid');
+        if (!$uid) return null;
+
+        return User::where('firebase_uid', $uid)->first();
+    }
+
     public function send(Request $request)
     {
         $request->validate([
-            'message' => 'required|string|max:1000',
+            'message'      => 'required|string|max:1000',
+            'firebase_uid' => 'required|string',
         ]);
 
-        $user = $request->user();
+        $user = $this->resolveUser($request);
 
-        // ── Limit check ───────────────────────────────────────────
-        if (!$user->is_subscribed && $user->chat_count >= self::FREE_CHAT_LIMIT) {
+        // ── Limit check (skip if user not found in Laravel — new Firebase-only user) ──
+        if ($user && !$user->is_subscribed && $user->chat_count >= self::FREE_CHAT_LIMIT) {
             return response()->json([
                 'status'        => 'error',
                 'limit_reached' => true,
@@ -30,10 +44,44 @@ class ChatController extends Controller
             ], 403);
         }
 
-        // ── Mock mode ─────────────────────────────────────────────
-        if (config('app.use_ai_mock') || empty(config('services.anthropic.key'))) {
+        // ── AI model selection ────────────────────────────────────
+        $openaiKey = config('services.openai.key');
+        $useMock   = config('app.use_ai_mock') || empty($openaiKey);
+
+        if ($useMock) {
             $aiReply = $this->mockReply(strtolower($request->message));
 
+        } else {
+            // ── OpenAI gpt-4o-mini ────────────────────────────────
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $openaiKey,
+                'Content-Type'  => 'application/json',
+            ])->post('https://api.openai.com/v1/chat/completions', [
+                'model'      => 'gpt-4o-mini',
+                'max_tokens' => 1024,
+                'messages'   => [
+                    [
+                        'role'    => 'system',
+                        'content' => 'You are AfyaSmart AI, a helpful health assistant for users in Kenya. Provide clear, accurate general health information. Always remind users to consult a licensed doctor for diagnosis or treatment.',
+                    ],
+                    [
+                        'role'    => 'user',
+                        'content' => $request->message,
+                    ],
+                ],
+            ]);
+
+            if (!$response->successful()) {
+                \Log::error('OpenAI error', ['status' => $response->status(), 'body' => $response->body()]);
+                return response()->json(['status' => 'error', 'reply' => 'Sorry, the AI service is unavailable. Please try again later.'], 503);
+            }
+
+            $aiReply = $response->json('choices.0.message.content')
+                ?? 'Sorry, I could not process your request.';
+        }
+
+        // ── Save log + increment count (only if user exists in Laravel) ──
+        if ($user) {
             ChatLog::create([
                 'user_id' => $user->id,
                 'message' => $request->message,
@@ -41,75 +89,54 @@ class ChatController extends Controller
             ]);
 
             $user->increment('chat_count');
-
-            return response()->json([
-                'status'        => 'success',
-                'reply'         => $aiReply,
-                'chat_count'    => $user->chat_count,
-                'limit'         => self::FREE_CHAT_LIMIT,
-                'is_subscribed' => $user->is_subscribed,
-            ]);
         }
-
-        // ── Anthropic Claude ──────────────────────────────────────
-        $response = Http::withHeaders([
-            'x-api-key'         => config('services.anthropic.key'),
-            'anthropic-version' => '2023-06-01',
-            'content-type'      => 'application/json',
-        ])->post('https://api.anthropic.com/v1/messages', [
-            'model'      => 'claude-haiku-4-5',
-            'max_tokens' => 1024,
-            'system'     => 'You are AfyaSmart AI, a helpful health assistant for users in Kenya.
-                             Provide clear, accurate general health information.
-                             Always remind users to consult a licensed doctor for diagnosis or treatment.',
-            'messages'   => [
-                ['role' => 'user', 'content' => $request->message],
-            ],
-        ]);
-
-        if (!$response->successful()) {
-            \Log::error('Anthropic error', [
-                'status' => $response->status(),
-                'body'   => $response->body(),
-            ]);
-            return response()->json([
-                'status' => 'error',
-                'reply'  => 'Sorry, the AI service is unavailable. Please try again later.',
-            ], 503);
-        }
-
-        $aiReply = $response->json('content.0.text')
-            ?? 'Sorry, I could not process your request.';
-
-        // ── Save log + increment count ────────────────────────────
-        ChatLog::create([
-            'user_id' => $user->id,
-            'message' => $request->message,
-            'reply'   => $aiReply,
-        ]);
-
-        $user->increment('chat_count');
 
         return response()->json([
             'status'        => 'success',
             'reply'         => $aiReply,
-            'chat_count'    => $user->chat_count,
+            'chat_count'    => $user?->fresh()->chat_count ?? 0,
             'limit'         => self::FREE_CHAT_LIMIT,
-            'is_subscribed' => $user->is_subscribed,
+            'is_subscribed' => $user?->is_subscribed ?? false,
         ]);
     }
 
     public function status(Request $request)
     {
-        $user = $request->user();
+        $request->validate(['firebase_uid' => 'required|string']);
+
+        $user = $this->resolveUser($request);
+
+        $chatCount    = $user?->chat_count ?? 0;
+        $isSubscribed = $user?->is_subscribed ?? false;
 
         return response()->json([
             'status'        => 'success',
-            'chat_count'    => $user->chat_count,
+            'chat_count'    => $chatCount,
             'limit'         => self::FREE_CHAT_LIMIT,
-            'is_subscribed' => $user->is_subscribed,
-            'limit_reached' => !$user->is_subscribed && $user->chat_count >= self::FREE_CHAT_LIMIT,
-            'remaining'     => max(0, self::FREE_CHAT_LIMIT - $user->chat_count),
+            'is_subscribed' => $isSubscribed,
+            'limit_reached' => !$isSubscribed && $chatCount >= self::FREE_CHAT_LIMIT,
+            'remaining'     => max(0, self::FREE_CHAT_LIMIT - $chatCount),
+        ]);
+    }
+
+    public function history(Request $request)
+    {
+        $request->validate(['firebase_uid' => 'required|string']);
+
+        $user = $this->resolveUser($request);
+
+        if (!$user) {
+            return response()->json(['status' => 'success', 'data' => []]);
+        }
+
+        $logs = ChatLog::where('user_id', $user->id)
+            ->latest()
+            ->take(50)
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data'   => $logs,
         ]);
     }
 
@@ -125,18 +152,5 @@ class ChatController extends Controller
             return 'Hello! I am AfyaSmart AI. How can I help you with your health question today?';
         }
         return 'Thank you for your question. For accurate medical advice, please consult a licensed healthcare provider.';
-    }
-
-    public function history(Request $request)
-    {
-        $logs = ChatLog::where('user_id', $request->user()->id)
-            ->latest()
-            ->take(50)
-            ->get();
-
-        return response()->json([
-            'status' => 'success',
-            'data'   => $logs,
-        ]);
     }
 }
