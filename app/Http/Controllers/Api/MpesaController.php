@@ -22,6 +22,21 @@ class MpesaController extends Controller
             'firebase_uid' => 'nullable|string',
         ]);
 
+        $uid = $request->firebase_uid;
+        if ($uid) {
+            \App\Models\User::firstOrCreate(
+                ['firebase_uid' => $uid],
+                [
+                    'name'                    => 'AfyaSmart User',
+                    'email'                   => $uid . '@afyasmart.local',
+                    'password'                => bcrypt(\Illuminate\Support\Str::random(16)),
+                    'is_subscribed'           => false,
+                    'chat_count'              => 0,
+                    'subscription_expires_at' => null,
+                ]
+            );
+        }
+
         $amount = match($request->plan) {
             'daily'   => 20,
             'weekly'  => 100,
@@ -107,6 +122,27 @@ class MpesaController extends Controller
             $resultCode = $result['ResultCode'] ?? null;
 
             if ($resultCode === '0' || $resultCode === 0) {
+                $cached = Cache::get("mpesa_{$checkoutId}");
+                if ($cached && !empty($cached['firebase_uid'])) {
+                    $firebaseUid = $cached['firebase_uid'];
+                    $plan = $cached['plan'] ?? 'monthly';
+                    $expiryDays = match($plan) {
+                        'daily'   => 1,
+                        'weekly'  => 7,
+                        'monthly' => 30,
+                        default   => 30,
+                    };
+
+                    $user = \App\Models\User::where('firebase_uid', $firebaseUid)->first();
+                    if ($user) {
+                        $user->update([
+                            'is_subscribed'           => true,
+                            'chat_count'              => 0,
+                            'subscription_expires_at' => now()->addDays($expiryDays),
+                        ]);
+                    }
+                }
+
                 Cache::forget("mpesa_{$checkoutId}");
 
                 return response()->json([
@@ -125,7 +161,8 @@ class MpesaController extends Controller
                 ]);
             }
 
-            if ($resultCode !== null) {
+            $terminalErrors = [1, '1', 1037, '1037', 2001, '2001', 1019, '1019'];
+            if ($resultCode !== null && in_array($resultCode, $terminalErrors, true)) {
                 Cache::forget("mpesa_{$checkoutId}");
                 return response()->json([
                     'status'  => 'failed',
@@ -168,6 +205,27 @@ class MpesaController extends Controller
             if ($cached) {
                 if ($resultCode === 0 || $resultCode === '0') {
                     Cache::put("mpesa_paid_{$checkoutId}", true, now()->addMinutes(5));
+
+                    $firebaseUid = $cached['firebase_uid'] ?? null;
+                    $plan = $cached['plan'] ?? 'monthly';
+                    if ($firebaseUid) {
+                        $expiryDays = match($plan) {
+                            'daily'   => 1,
+                            'weekly'  => 7,
+                            'monthly' => 30,
+                            default   => 30,
+                        };
+
+                        $user = \App\Models\User::where('firebase_uid', $firebaseUid)->first();
+                        if ($user) {
+                            $user->update([
+                                'is_subscribed'           => true,
+                                'chat_count'              => 0,
+                                'subscription_expires_at' => now()->addDays($expiryDays),
+                            ]);
+                        }
+                    }
+
                 } elseif ($resultCode === 1032 || $resultCode === '1032') {
                     Cache::put("mpesa_cancelled_{$checkoutId}", true, now()->addMinutes(5));
                 } else {
